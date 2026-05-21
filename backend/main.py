@@ -6,8 +6,6 @@ from fastapi.responses import JSONResponse
 import os
 import time
 import logging
-import sqlite3
-
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,44 +18,8 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# DATABASE RESET CHECK
-db_path = "./face_recognition.db"
-
-if os.path.exists(db_path):
-
-    try:
-
-        conn = sqlite3.connect(db_path)
-
-        cursor = conn.cursor()
-
-        cursor.execute("PRAGMA table_info(users)")
-
-        columns = [col[1] for col in cursor.fetchall()]
-
-        conn.close()
-
-        # RESET IF OLD SCHEMA
-        if (
-            len(columns) > 0 and
-            "master_embedding" not in columns
-        ):
-
-            logger.info(
-                "Old database schema detected. Resetting DB."
-            )
-
-            os.remove(db_path)
-
-    except Exception as e:
-
-        logger.error(
-            f"Database schema check failed: {e}"
-        )
-
 # IMPORT DB
-from database.db import engine, Base, SessionLocal
-from models.user import User
+from database.db import db
 
 # IMPORT ROUTES
 from routes.api import router as api_router
@@ -65,43 +27,12 @@ from routes.api import router as api_router
 # IMPORT AI ERROR
 from services.ai_service import FaceRecognitionError
 
-# CREATE TABLES
-Base.metadata.create_all(bind=engine)
-
 # VALIDATE DATABASE
-db_session = SessionLocal()
-
 try:
-
-    test_user = User(
-        name="__startup_test__",
-        embeddings="[]",
-        master_embedding="[]"
-    )
-
-    db_session.add(test_user)
-
-    db_session.commit()
-
-    db_session.delete(test_user)
-
-    db_session.commit()
-
-    logger.info(
-        "SQLite database verified successfully."
-    )
-
+    db.command("ping")
+    logger.info("MongoDB verified successfully.")
 except Exception as e:
-
-    db_session.rollback()
-
-    logger.error(
-        f"Database validation failed: {e}"
-    )
-
-finally:
-
-    db_session.close()
+    logger.error(f"MongoDB verification failed: {e}")
 
 # FASTAPI APP
 app = FastAPI(

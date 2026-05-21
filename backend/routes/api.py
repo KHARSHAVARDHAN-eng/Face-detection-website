@@ -6,8 +6,6 @@ from fastapi import (
     HTTPException
 )
 
-from sqlalchemy.orm import Session
-
 from typing import List, Optional
 
 import os
@@ -20,8 +18,8 @@ import numpy as np
 from pydantic import BaseModel
 
 from database.db import get_db
-
-from models.user import User
+from bson.objectid import ObjectId
+from datetime import datetime
 
 from models.schemas import (
     RegistrationResponse,
@@ -104,7 +102,7 @@ async def process_frame(
 )
 async def register_user(
     req: RegisterRequest,
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
 
     print("\n===== REGISTER USER =====")
@@ -225,33 +223,20 @@ async def register_user(
             master_embedding / master_norm
         )
 
-    # SERIALIZE
-    serialized_embeddings = json.dumps(
-        normalized_embeddings
-    )
-
-    serialized_master = json.dumps(
-        master_embedding.tolist()
-    )
-
-    # SAVE USER
+    # SAVE USER TO MONGODB
     try:
+        user_doc = {
+            "name": req.name.strip(),
+            "embeddings": normalized_embeddings,
+            "master_embedding": master_embedding.tolist(),
+            "image_path": saved_image_path,
+            "created_at": datetime.utcnow()
+        }
 
-        user = User(
-            name=req.name.strip(),
-            embeddings=serialized_embeddings,
-            master_embedding=serialized_master,
-            image_path=saved_image_path
-        )
-
-        db.add(user)
-
-        db.commit()
-
-        db.refresh(user)
+        result = db.users.insert_one(user_doc)
 
         print(
-            "USER SAVED SUCCESSFULLY"
+            f"USER SAVED SUCCESSFULLY: {result.inserted_id}"
         )
 
         return {
@@ -261,8 +246,6 @@ async def register_user(
         }
 
     except Exception as e:
-
-        db.rollback()
 
         print(
             "DATABASE SAVE FAILED:",
@@ -284,7 +267,7 @@ async def register_user(
 )
 async def recognize_user(
     image: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
 
     print("\n===== RECOGNITION =====")
@@ -322,8 +305,8 @@ async def recognize_user(
             "Invalid Person. Please Register."
         }
 
-    # LOAD USERS
-    users = db.query(User).all()
+    # LOAD USERS FROM MONGODB
+    users = list(db.users.find({}))
 
     if len(users) == 0:
 
@@ -342,20 +325,7 @@ async def recognize_user(
     # GLOBAL MATCH SEARCH
     for user in users:
 
-        try:
-
-            stored_embeddings = json.loads(
-                user.embeddings
-            )
-
-        except Exception as e:
-
-            print(
-                f"JSON parse failed for "
-                f"{user.name}: {e}"
-            )
-
-            continue
+        stored_embeddings = user.get("embeddings", [])
 
         for emb in stored_embeddings:
 
@@ -370,7 +340,7 @@ async def recognize_user(
                 )
 
                 print(
-                    f"{user.name} -> "
+                    f"{user['name']} -> "
                     f"{similarity:.4f}"
                 )
 
@@ -389,7 +359,7 @@ async def recognize_user(
 
     print(
         f"\nBEST USER: "
-        f"{best_user.name if best_user else 'NONE'}"
+        f"{best_user['name'] if best_user else 'NONE'}"
     )
 
     print(
@@ -407,7 +377,7 @@ async def recognize_user(
 
         return {
             "status": "matched",
-            "name": best_user.name,
+            "name": best_user["name"],
             "confidence": round(float(best_similarity), 4),
             "threshold": THRESHOLD
         }
@@ -430,18 +400,18 @@ async def recognize_user(
     response_model=List[UserResponse]
 )
 def get_users(
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
 
-    users = db.query(User).all()
+    users = list(db.users.find({}))
 
     return [
 
         {
-            "id": u.id,
-            "name": u.name,
-            "created_at": u.created_at,
-            "image_path": u.image_path
+            "id": str(u["_id"]),
+            "name": u["name"],
+            "created_at": u.get("created_at", datetime.utcnow()),
+            "image_path": u.get("image_path")
         }
 
         for u in users
@@ -456,13 +426,19 @@ def get_users(
     response_model=DeleteResponse
 )
 def delete_user(
-    user_id: int,
-    db: Session = Depends(get_db)
+    user_id: str,
+    db = Depends(get_db)
 ):
 
-    user = db.query(User).filter(
-        User.id == user_id
-    ).first()
+    try:
+        obj_id = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid user ID format"
+        )
+
+    user = db.users.find_one({"_id": obj_id})
 
     if not user:
 
@@ -472,15 +448,13 @@ def delete_user(
         )
 
     if (
-        user.image_path and
-        os.path.exists(user.image_path)
+        user.get("image_path") and
+        os.path.exists(user["image_path"])
     ):
 
-        os.remove(user.image_path)
+        os.remove(user["image_path"])
 
-    db.delete(user)
-
-    db.commit()
+    db.users.delete_one({"_id": obj_id})
 
     return {
         "message":

@@ -10,7 +10,7 @@ from datetime import datetime
 # =========================================
 class UserResponse(BaseModel):
 
-    id: int
+    id: str
 
     name: str
 

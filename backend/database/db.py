@@ -1,43 +1,16 @@
-from sqlalchemy import create_engine
+import os
+from pymongo import MongoClient
 
-from sqlalchemy.orm import (
-    declarative_base,
-    sessionmaker
-)
+# MONGODB CONNECTION CONFIGURATION
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+DATABASE_NAME = os.getenv("MONGODB_DB", "face_recognition")
 
-# SQLITE DATABASE
-DATABASE_URL = (
-    "sqlite:///./face_recognition.db"
-)
+client = MongoClient(MONGODB_URI)
+db = client[DATABASE_NAME]
 
-# ENGINE
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={
-        "check_same_thread": False
-    }
-)
-
-# SESSION
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine
-)
-
-# BASE MODEL
-Base = declarative_base()
-
-
-# DATABASE SESSION DEPENDENCY
+# DATABASE DEPENDENCY FOR FASTAPI ROUTES
 def get_db():
-
-    db = SessionLocal()
-
     try:
-
         yield db
-
     finally:
-
-        db.close() 
+        pass

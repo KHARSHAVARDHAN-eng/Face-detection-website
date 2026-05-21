@@ -10,3 +10,10 @@ tensorflow==2.16.1
 tf-keras==2.16.0
 mediapipe==0.10.14
 pillow==10.2.0
+pymongo==4.6.2
+datasets==2.18.0
+huggingface-hub==0.21.4
+insightface==0.7.3
+onnx==1.15.0
+onnxruntime==1.17.1
+yt-dlp==2024.3.10
