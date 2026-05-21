@@ -397,7 +397,7 @@ async def recognize_user(
         f"{best_similarity:.4f}"
     )
 
-    THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.70"))
+    THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.30"))
 
     # MATCH FOUND
     if (

@@ -196,7 +196,7 @@ export default function Recognize() {
 
             {result.confidence !== undefined && result.confidence !== null && (
               <p className="text-slate-400 text-xs mt-4">
-                Confidence Score: <span className="text-green-400 font-mono font-bold">{(result.confidence * 100).toFixed(2)}%</span> (Required: {((result.threshold ?? 0.70) * 100).toFixed(2)}%)
+                Confidence Score: <span className="text-green-400 font-mono font-bold">{(result.confidence * 100).toFixed(2)}%</span>
               </p>
             )}
 
@@ -227,7 +227,7 @@ export default function Recognize() {
 
             {result.confidence !== undefined && result.confidence !== null && (
               <p className="text-slate-400 text-xs mb-6">
-                Highest Similarity: <span className="text-red-400 font-mono font-bold">{(result.confidence * 100).toFixed(2)}%</span> (Required: {((result.threshold ?? 0.70) * 100).toFixed(2)}%)
+                Highest Similarity: <span className="text-red-400 font-mono font-bold">{(result.confidence * 100).toFixed(2)}%</span>
               </p>
             )}
 
