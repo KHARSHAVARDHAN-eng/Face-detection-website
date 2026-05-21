@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - MOCK_AI_MODE=true
+      - CORS_ORIGINS=http://localhost:5173,http://localhost
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/face_recognition.db:/app/face_recognition.db
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=http://localhost:8000/api
+        - VITE_STATIC_URL=http://localhost:8000
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
