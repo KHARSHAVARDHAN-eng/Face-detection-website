@@ -25,11 +25,14 @@ from models.schemas import (
     RegistrationResponse,
     RecognitionResponse,
     UserResponse,
-    DeleteResponse
+    DeleteResponse,
+    FaceRecognitionResult,
+    MultiRecognitionResponse
 )
 
 from services.ai_service import (
     extract_face_embedding,
+    extract_multiple_face_embeddings,
     cosine_similarity,
     FaceRecognitionError
 )
@@ -39,6 +42,32 @@ router = APIRouter()
 UPLOAD_DIR = "uploads"
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+# =========================================
+# EMBEDDING CACHE
+# =========================================
+_users_cache = None
+
+def get_cached_users(db, force_refresh=False):
+    global _users_cache
+    if _users_cache is None or force_refresh:
+        print("\n[CACHE] Refreshing database embeddings cache...")
+        users = list(db.users.find({}, {"_id": 1, "name": 1, "embeddings": 1}))
+        _users_cache = []
+        for u in users:
+            embeddings_np = []
+            for emb in u.get("embeddings", []):
+                if len(emb) == 512:
+                    embeddings_np.append(np.array(emb, dtype=np.float32))
+            _users_cache.append({
+                "id": str(u["_id"]),
+                "name": u["name"],
+                "embeddings": embeddings_np
+            })
+        print(f"[CACHE] Loaded {len(_users_cache)} users into cache.\n")
+    return _users_cache
+
 
 
 # =========================================
@@ -239,6 +268,8 @@ async def register_user(
             f"USER SAVED SUCCESSFULLY: {result.inserted_id}"
         )
 
+        get_cached_users(db, force_refresh=True)
+
         return {
             "success": True,
             "message":
@@ -263,133 +294,82 @@ async def register_user(
 # =========================================
 @router.post(
     "/recognize",
-    response_model=RecognitionResponse
+    response_model=MultiRecognitionResponse
 )
 async def recognize_user(
     image: UploadFile = File(...),
     db = Depends(get_db)
 ):
 
-    print("\n===== RECOGNITION =====")
+    print("\n===== RECOGNITION (MULTI-USER) =====")
 
-    # EXTRACT LIVE EMBEDDING
     try:
-
         image_bytes = await image.read()
-
-        target_embedding = extract_face_embedding(
-            image_bytes
-        )
-
-        if (
-            not target_embedding or
-            len(target_embedding) != 512
-        ):
-
-            return {
-                "status": "invalid",
-                "message":
-                "Invalid Person. Please Register."
-            }
-
+        faces, w_img, h_img = extract_multiple_face_embeddings(image_bytes)
     except Exception as e:
-
-        print(
-            "Embedding extraction failed:",
-            e
-        )
-
+        print("Embedding extraction failed:", e)
         return {
-            "status": "invalid",
-            "message":
-            "Invalid Person. Please Register."
+            "success": False,
+            "width": 0,
+            "height": 0,
+            "faces": []
         }
 
-    # LOAD USERS FROM MONGODB
-    users = list(db.users.find({}))
-
-    if len(users) == 0:
-
+    if len(faces) == 0:
         return {
-            "status": "invalid",
-            "message":
-            "No registered users found."
+            "success": True,
+            "width": w_img,
+            "height": h_img,
+            "faces": []
         }
 
-    best_similarity = -1.0
-
-    best_user = None
-
-    print("\n===== MATCHING =====")
-
-    # GLOBAL MATCH SEARCH
-    for user in users:
-
-        stored_embeddings = user.get("embeddings", [])
-
-        for emb in stored_embeddings:
-
-            try:
-
-                if len(emb) != 512:
-                    continue
-
-                similarity = cosine_similarity(
-                    target_embedding,
-                    emb
-                )
-
-                print(
-                    f"{user['name']} -> "
-                    f"{similarity:.4f}"
-                )
-
-                if similarity > best_similarity:
-
-                    best_similarity = similarity
-
-                    best_user = user
-
-            except Exception as e:
-
-                print(
-                    "Similarity error:",
-                    e
-                )
-
-    print(
-        f"\nBEST USER: "
-        f"{best_user['name'] if best_user else 'NONE'}"
-    )
-
-    print(
-        f"BEST SCORE: "
-        f"{best_similarity:.4f}"
-    )
-
+    # Load users from cache
+    users = get_cached_users(db)
     THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.30"))
 
-    # MATCH FOUND
-    if (
-        best_user and
-        best_similarity >= THRESHOLD
-    ):
+    results = []
 
-        return {
-            "status": "matched",
-            "name": best_user["name"],
-            "confidence": round(float(best_similarity), 4),
-            "threshold": THRESHOLD
-        }
+    for face in faces:
+        target_embedding = face["embedding"]
+        best_similarity = -1.0
+        best_name = None
 
-    # INVALID PERSON
+        # Compare against cached users
+        for u in users:
+            for emb in u["embeddings"]:
+                try:
+                    similarity = cosine_similarity(target_embedding, emb)
+                    if similarity > best_similarity:
+                        best_similarity = similarity
+                        best_name = u["name"]
+                except Exception as e:
+                    print("Similarity error:", e)
+
+        # Match decision
+        if best_name and best_similarity >= THRESHOLD:
+            results.append({
+                "name": best_name,
+                "confidence": round(float(best_similarity) * 100, 1),
+                "box": face["box"],
+                "status": "matched"
+            })
+            print(f"Match: {best_name} ({best_similarity * 100:.1f}%)")
+        else:
+            results.append({
+                "name": "Unknown",
+                "confidence": round(float(best_similarity) * 100, 1) if best_name else 0.0,
+                "box": face["box"],
+                "status": "unknown"
+            })
+            print(f"Unknown (Highest similarity: {best_similarity * 100:.1f}%)")
+
     return {
-        "status": "invalid",
-        "message":
-        "Invalid Person. Please Register.",
-        "confidence": round(float(best_similarity), 4) if best_user else None,
-        "threshold": THRESHOLD
+        "success": True,
+        "width": w_img,
+        "height": h_img,
+        "faces": results
     }
+
 
 
 # =========================================
@@ -455,6 +435,8 @@ def delete_user(
         os.remove(user["image_path"])
 
     db.users.delete_one({"_id": obj_id})
+
+    get_cached_users(db, force_refresh=True)
 
     return {
         "message":

@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from typing import Optional
+from typing import Optional, List
 
 from datetime import datetime
 
@@ -47,6 +47,23 @@ class RecognitionResponse(BaseModel):
     confidence: Optional[float] = None
 
     threshold: Optional[float] = None
+
+
+# =========================================
+# MULTI FACE RECOGNITION
+# =========================================
+class FaceRecognitionResult(BaseModel):
+    name: str
+    confidence: float
+    box: List[int]
+    status: str
+
+
+class MultiRecognitionResponse(BaseModel):
+    success: bool
+    width: int
+    height: int
+    faces: List[FaceRecognitionResult]
 
 
 # =========================================

@@ -94,6 +94,58 @@ def extract_face_embedding(image_bytes: bytes) -> list:
         )
 
 
+def extract_multiple_face_embeddings(image_bytes: bytes):
+    """
+    Decodes the image bytes, runs DeepFace.represent to extract all faces,
+    and returns a list of dictionaries containing the normalized embedding and bounding box coordinates,
+    along with raw image dimensions.
+    """
+    try:
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            return [], 0, 0
+            
+        h_img, w_img = img.shape[:2]
+        
+        # Detect all faces and get representations
+        embedding_objs = DeepFace.represent(
+            img_path=img,
+            model_name="ArcFace",
+            detector_backend="retinaface",
+            enforce_detection=False
+        )
+        
+        results = []
+        if not embedding_objs:
+            return [], w_img, h_img
+            
+        for obj in embedding_objs:
+            area = obj.get("facial_area", {})
+            if not area:
+                continue
+                
+            x, y, w, h = area.get("x", 0), area.get("y", 0), area.get("w", 0), area.get("h", 0)
+            x1, y1 = max(0, x), max(0, y)
+            x2, y2 = min(w_img, x + w), min(h_img, y + h)
+            
+            emb = np.array(obj["embedding"], dtype=np.float32)
+            norm = np.linalg.norm(emb)
+            if norm > 0:
+                emb = emb / norm
+                
+            results.append({
+                "embedding": emb.tolist(),
+                "box": [int(x1), int(y1), int(x2), int(y2)]
+            })
+            
+        return results, w_img, h_img
+        
+    except Exception as e:
+        print("Error in extract_multiple_face_embeddings:", e)
+        return [], 0, 0
+
+
 # GLOBAL BEST MATCH SEARCH
 def compare_faces(
     target_embedding,

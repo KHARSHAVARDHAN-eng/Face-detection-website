@@ -9,7 +9,10 @@ export default function WebcamCapture({
   isActive = false,
   onScanComplete,
   onRecognizeFrame,
-  registrationSuccess = false
+  registrationSuccess = false,
+  faces = [],
+  imageWidth = 1280,
+  imageHeight = 720
 }) {
 
   const webcamRef = useRef(null);
@@ -317,7 +320,7 @@ export default function WebcamCapture({
 
     faceMesh.setOptions({
 
-      maxNumFaces: 1,
+      maxNumFaces: mode === 'enrollment' ? 1 : 10,
 
       refineLandmarks: true,
 
@@ -379,7 +382,7 @@ export default function WebcamCapture({
 
             recognizeProcessingRef.current = false;
 
-          }, 1500);
+          }, 800);
         }
       }
 
@@ -396,6 +399,9 @@ export default function WebcamCapture({
 
     if (!video) return;
 
+    const videoWidth = mode === 'enrollment' ? 640 : 1280;
+    const videoHeight = mode === 'enrollment' ? 640 : 720;
+
     const camera = new Camera(video, {
 
       onFrame: async () => {
@@ -411,9 +417,9 @@ export default function WebcamCapture({
         }
       },
 
-      width: 640,
+      width: videoWidth,
 
-      height: 640,
+      height: videoHeight,
     });
 
     cameraRef.current = camera;
@@ -427,6 +433,82 @@ export default function WebcamCapture({
     mode === 'enrollment'
       ? (capturedCount / 5) * 100
       : 100;
+
+  if (mode === 'recognition') {
+    return (
+      <div className="flex flex-col items-center w-full">
+        {/* CAMERA CARD */}
+        <div className="w-full max-w-4xl aspect-[16/9] rounded-3xl overflow-hidden border border-slate-800 bg-black relative shadow-2xl">
+          <Webcam
+            ref={webcamRef}
+            audio={false}
+            mirrored
+            screenshotFormat="image/jpeg"
+            onUserMedia={handleUserMedia}
+            videoConstraints={{
+              width: 1280,
+              height: 720,
+              facingMode: 'user'
+            }}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover'
+            }}
+          />
+          
+          {/* FACES OVERLAY */}
+          {isActive && faces && faces.map((face, idx) => {
+            const imgWidth = imageWidth || 1280;
+            const imgHeight = imageHeight || 720;
+            const left = ((imgWidth - face.box[2]) / imgWidth) * 100;
+            const top = (face.box[1] / imgHeight) * 100;
+            const width = ((face.box[2] - face.box[0]) / imgWidth) * 100;
+            const height = ((face.box[3] - face.box[1]) / imgHeight) * 100;
+            const isMatched = face.status === 'matched';
+            
+            const labelBgClass = isMatched 
+              ? 'bg-emerald-500/90 border border-emerald-400/30 text-white shadow-emerald-950/20' 
+              : 'bg-rose-500/90 border border-rose-400/30 text-white shadow-rose-950/20';
+
+            return (
+              <div 
+                key={idx}
+                className="absolute transition-all duration-150 border-0 bg-transparent"
+                style={{
+                  left: `${left}%`,
+                  top: `${top}%`,
+                  width: `${width}%`,
+                  height: `${height}%`,
+                }}
+              >
+                {/* FLOATING LABEL */}
+                <div className={`absolute -top-7 left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap shadow-xl backdrop-blur-sm flex items-center gap-1.5 ${labelBgClass}`}>
+                  <span>{isMatched ? '👤' : '❓'}</span>
+                  <span>{face.name}</span>
+                  {face.confidence > 0 && (
+                    <span className="font-mono font-bold opacity-90 border-l border-white/20 pl-1.5">
+                      {face.confidence.toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {!isActive && !registrationSuccess && (
+            <div className="absolute inset-0 bg-black/80 flex items-center justify-center text-slate-500 text-sm font-bold">
+              Scanner Inactive
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 text-slate-300 text-sm text-center">
+          {instruction}
+        </div>
+      </div>
+    );
+  }
 
   return (
 

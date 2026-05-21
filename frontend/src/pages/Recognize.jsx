@@ -98,30 +98,31 @@ export default function Recognize() {
 
   return (
 
-    <div className="max-w-2xl mx-auto bg-slate-900 border border-slate-800 p-8 md:p-12 rounded-3xl shadow-2xl">
+    <div className="max-w-5xl mx-auto bg-slate-900 border border-slate-800 p-8 md:p-12 rounded-3xl shadow-2xl">
 
       {/* TITLE */}
       <h2 className="text-3xl font-extrabold text-center text-white mb-2">
 
-        Biometric Verification
+        Multi-User Biometric Verification
 
       </h2>
 
       <p className="text-center text-slate-400 text-sm mb-10">
 
-        Real-time facial recognition system
+        Real-time multi-face recognition system
 
       </p>
 
       {/* CAMERA */}
-      <div className="bg-slate-950/40 p-6 rounded-3xl border border-slate-800/50 flex flex-col items-center justify-center mb-8">
+      <div className="bg-slate-950/40 p-6 rounded-3xl border border-slate-800/50 flex flex-col items-center justify-center mb-8 w-full">
 
         <WebcamCapture
           mode="recognition"
           isActive={isActive}
-          onRecognizeFrame={
-            handleRecognizeFrame
-          }
+          onRecognizeFrame={handleRecognizeFrame}
+          faces={result?.faces || []}
+          imageWidth={result?.width}
+          imageHeight={result?.height}
         />
 
         {!isActive && (
@@ -148,7 +149,7 @@ export default function Recognize() {
 
           <div className="inline-flex items-center px-4 py-2 bg-green-500/10 border border-green-500/20 text-green-400 rounded-full text-xs font-semibold animate-pulse">
 
-            Verifying Biometric Signature...
+            Verifying Biometric Signatures...
 
           </div>
 
@@ -165,85 +166,48 @@ export default function Recognize() {
         </div>
       )}
 
-      {/* MATCHED */}
-      {result &&
-        result.status === 'matched' && (
-
-          <div className="mt-6 p-8 rounded-3xl border border-green-500/30 bg-green-950/20 text-center">
-
-            <div className="text-4xl mb-3">
-              ✅
-            </div>
-
-            <h3 className="text-2xl font-bold text-green-400 mb-2">
-
-              Identity Verified
-
-            </h3>
-
-            <p className="text-white text-xl">
-
-              Welcome,
-              {' '}
-
-              <span className="font-black">
-
-                {result.name}
-
-              </span>
-
-            </p>
-
-            {result.confidence !== undefined && result.confidence !== null && (
-              <p className="text-slate-400 text-xs mt-4">
-                Confidence Score: <span className="text-green-400 font-mono font-bold">{(result.confidence * 100).toFixed(2)}%</span>
-              </p>
-            )}
-
+      {/* DETECTED USERS GRID */}
+      {result && result.faces && result.faces.length > 0 && (
+        <div className="mt-6">
+          <h3 className="text-lg font-bold text-white mb-4">Detected Faces</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {result.faces.map((face, index) => {
+              const isMatched = face.status === 'matched';
+              return (
+                <div 
+                  key={index} 
+                  className={`p-4 rounded-2xl border flex items-center justify-between transition-all duration-300 ${
+                    isMatched 
+                      ? 'border-emerald-500/30 bg-emerald-950/20 text-emerald-400 shadow-emerald-950/10' 
+                      : 'border-rose-500/30 bg-rose-950/20 text-rose-400 shadow-rose-950/10'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl">{isMatched ? '👤' : '❓'}</span>
+                    <div>
+                      <h4 className="font-bold text-white text-base leading-tight">
+                        {face.name}
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Status: <span className={isMatched ? 'text-emerald-400 font-medium' : 'text-rose-400 font-medium'}>
+                          {isMatched ? 'Verified' : 'Unknown'}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                  {face.confidence > 0 && (
+                    <div className="text-right">
+                      <span className="font-mono font-bold text-sm bg-slate-950/60 px-2 py-1 rounded-lg border border-slate-800">
+                        {face.confidence.toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        )}
-
-      {/* INVALID */}
-      {result &&
-        result.status !== 'matched' && (
-
-          <div className="mt-6 p-8 rounded-3xl border border-red-500/40 bg-red-950/20 text-center">
-
-            <div className="text-4xl mb-3">
-              🚨
-            </div>
-
-            <h3 className="text-2xl font-black text-red-500 mb-2">
-
-              Invalid Person
-
-            </h3>
-
-            <p className="text-slate-300 text-sm mb-4">
-
-              Please Register
-
-            </p>
-
-            {result.confidence !== undefined && result.confidence !== null && (
-              <p className="text-slate-400 text-xs mb-6">
-                Highest Similarity: <span className="text-red-400 font-mono font-bold">{(result.confidence * 100).toFixed(2)}%</span>
-              </p>
-            )}
-
-            <button
-              onClick={() =>
-                navigate('/register')
-              }
-              className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl"
-            >
-
-              Go to Registration
-
-            </button>
-
-          </div>
-        )}
+        </div>
+      )}
 
     </div>
   );
