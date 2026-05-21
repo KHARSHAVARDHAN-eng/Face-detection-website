@@ -44,6 +44,8 @@ class RecognitionResponse(BaseModel):
 
     message: Optional[str] = None
 
+    confidence: Optional[float] = None
+
 
 # =========================================
 # DELETE RESPONSE

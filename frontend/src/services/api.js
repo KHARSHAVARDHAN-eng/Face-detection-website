@@ -4,12 +4,14 @@ import axios from 'axios';
 // API URLS
 // =========================================
 const API_URL =
-  import.meta.env.VITE_API_URL ||
-  'http://localhost:8000/api';
+  import.meta.env.VITE_API_URL !== undefined
+    ? import.meta.env.VITE_API_URL
+    : 'http://localhost:8000/api';
 
 export const STATIC_URL =
-  import.meta.env.VITE_STATIC_URL ||
-  'http://localhost:8000';
+  import.meta.env.VITE_STATIC_URL !== undefined
+    ? import.meta.env.VITE_STATIC_URL
+    : 'http://localhost:8000';
 
 
 // =========================================

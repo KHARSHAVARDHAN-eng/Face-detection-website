@@ -194,6 +194,12 @@ export default function Recognize() {
 
             </p>
 
+            {result.confidence !== undefined && result.confidence !== null && (
+              <p className="text-slate-400 text-xs mt-4">
+                Confidence Score: <span className="text-green-400 font-mono font-bold">{(result.confidence * 100).toFixed(2)}%</span>
+              </p>
+            )}
+
           </div>
         )}
 
@@ -213,11 +219,17 @@ export default function Recognize() {
 
             </h3>
 
-            <p className="text-slate-300 text-sm mb-6">
+            <p className="text-slate-300 text-sm mb-4">
 
               Please Register
 
             </p>
+
+            {result.confidence !== undefined && result.confidence !== null && (
+              <p className="text-slate-400 text-xs mb-6">
+                Highest Similarity: <span className="text-red-400 font-mono font-bold">{(result.confidence * 100).toFixed(2)}%</span> (Required: 70.00%)
+              </p>
+            )}
 
             <button
               onClick={() =>

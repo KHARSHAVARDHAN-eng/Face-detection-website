@@ -407,14 +407,16 @@ async def recognize_user(
 
         return {
             "status": "matched",
-            "name": best_user.name
+            "name": best_user.name,
+            "confidence": round(float(best_similarity), 4)
         }
 
     # INVALID PERSON
     return {
         "status": "invalid",
         "message":
-        "Invalid Person. Please Register."
+        "Invalid Person. Please Register.",
+        "confidence": round(float(best_similarity), 4) if best_user else None
     }
 
 
