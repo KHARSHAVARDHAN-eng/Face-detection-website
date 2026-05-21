@@ -397,7 +397,7 @@ async def recognize_user(
         f"{best_similarity:.4f}"
     )
 
-    THRESHOLD = 0.70
+    THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.70"))
 
     # MATCH FOUND
     if (
@@ -408,7 +408,8 @@ async def recognize_user(
         return {
             "status": "matched",
             "name": best_user.name,
-            "confidence": round(float(best_similarity), 4)
+            "confidence": round(float(best_similarity), 4),
+            "threshold": THRESHOLD
         }
 
     # INVALID PERSON
@@ -416,7 +417,8 @@ async def recognize_user(
         "status": "invalid",
         "message":
         "Invalid Person. Please Register.",
-        "confidence": round(float(best_similarity), 4) if best_user else None
+        "confidence": round(float(best_similarity), 4) if best_user else None,
+        "threshold": THRESHOLD
     }
 
 

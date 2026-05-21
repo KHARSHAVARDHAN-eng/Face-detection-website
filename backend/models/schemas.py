@@ -46,6 +46,8 @@ class RecognitionResponse(BaseModel):
 
     confidence: Optional[float] = None
 
+    threshold: Optional[float] = None
+
 
 # =========================================
 # DELETE RESPONSE
