@@ -12,6 +12,7 @@ venv/
 .venv/
 backend/face_recognition.db
 backend/uploads/
+uploads/
 backend/dataset/
 
 # Node

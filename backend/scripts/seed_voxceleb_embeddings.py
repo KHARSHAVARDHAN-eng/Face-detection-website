@@ -23,37 +23,90 @@ def parse_args():
 
 def crop_face(img_np):
     """
-    Returns the image directly. (LFW images are already cropped around the face,
-    allowing us to bypass heavy detection for faster execution).
+    Detects and crops the face with alignment using MTCNN to ensure high-quality,
+    centered inputs for embedding generation.
     """
+    try:
+        faces = DeepFace.extract_faces(
+            img_path=img_np,
+            detector_backend="mtcnn",
+            enforce_detection=False,
+            align=True
+        )
+        if faces and len(faces) > 0:
+            face_img = faces[0]["face"]
+            if face_img.max() <= 1.0:
+                face_img = (face_img * 255).astype(np.uint8)
+            return face_img
+    except Exception as e:
+        print(f"Face extraction and alignment in crop_face failed: {e}")
     return img_np
 
-def generate_perturbed_embeddings(face_crop, num_embeddings=5):
+
+def generate_perturbed_embeddings(face_crop, num_embeddings=15):
     """
-    Generates num_embeddings distinct embeddings by perturbing the face crop
-    (e.g., horizontal flip, brightness shifts) to simulate multiple camera views.
+    Generates dynamic variations of the face crop simulating real-world conditions
+    (reflections, blur, screen artifacts, angles, contrast/brightness shifts)
+    and extracts ArcFace embeddings for all of them.
     """
     embeddings = []
     
-    # Base representations
     variations = []
     # 1. Original
     variations.append(face_crop)
+    
     # 2. Horizontal Flip
     variations.append(cv2.flip(face_crop, 1))
-    # 3. Brightness Shift Up
-    variations.append(cv2.convertScaleAbs(face_crop, alpha=1.0, beta=15))
-    # 4. Brightness Shift Down
-    variations.append(cv2.convertScaleAbs(face_crop, alpha=1.0, beta=-15))
-    # 5. Contrast Shift
-    variations.append(cv2.convertScaleAbs(face_crop, alpha=1.1, beta=0))
     
-    # Make sure we have enough variations
+    # 3. Brightness Shift Up (brighter)
+    variations.append(cv2.convertScaleAbs(face_crop, alpha=1.0, beta=25))
+    
+    # 4. Brightness Shift Down (darker)
+    variations.append(cv2.convertScaleAbs(face_crop, alpha=1.0, beta=-25))
+    
+    # 5. Contrast Up
+    variations.append(cv2.convertScaleAbs(face_crop, alpha=1.3, beta=0))
+    
+    # 6. Contrast Down
+    variations.append(cv2.convertScaleAbs(face_crop, alpha=0.7, beta=0))
+    
+    # 7-10. Rotations (-15, -7, 7, 15 degrees)
+    h, w = face_crop.shape[:2]
+    center = (w // 2, h // 2)
+    for angle in [-15, -7, 7, 15]:
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotated = cv2.warpAffine(face_crop, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        variations.append(rotated)
+        
+    # 11. Gaussian Blur (slight defocus)
+    variations.append(cv2.GaussianBlur(face_crop, (3, 3), 0))
+    
+    # 12. Screen-Noise Simulation (Moiré / sensor noise)
+    noise = np.random.normal(0, 10, face_crop.shape).astype(np.int16)
+    noisy = np.clip(face_crop.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+    variations.append(noisy)
+    
+    # 13. Phone Screen Simulation (glare vignette)
+    glare = np.zeros_like(face_crop, dtype=np.uint8)
+    cv2.circle(glare, (0, 0), w, (100, 100, 100), -1)
+    screen_sim = cv2.addWeighted(face_crop, 0.8, glare, 0.2, 0)
+    variations.append(screen_sim)
+    
+    # 14. JPEG Compression Artifacts
+    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 30]
+    _, encimg = cv2.imencode('.jpg', face_crop, encode_param)
+    decimg = cv2.imdecode(encimg, 1)
+    variations.append(decimg)
+    
+    # 15. Median Blur
+    variations.append(cv2.medianBlur(face_crop, 3))
+    
+    # Truncate or pad to exactly match requested embeddings limit
     while len(variations) < num_embeddings:
         variations.append(face_crop)
-        
-    for i in range(num_embeddings):
-        img_var = variations[i]
+    variations = variations[:num_embeddings]
+    
+    for i, img_var in enumerate(variations):
         try:
             repr_objs = DeepFace.represent(
                 img_path=img_var,
@@ -68,9 +121,9 @@ def generate_perturbed_embeddings(face_crop, num_embeddings=5):
                     emb = emb / norm
                 embeddings.append(emb.tolist())
             else:
-                # Fallback to zero vector if represent fails
                 embeddings.append(np.zeros(512).tolist())
-        except Exception:
+        except Exception as e:
+            print(f"Error extracting embedding for variation {i}: {e}")
             embeddings.append(np.zeros(512).tolist())
             
     return embeddings
@@ -113,6 +166,7 @@ def main():
     
     while current_count < args.limit:
         try:
+            print(f"[DEBUG] Fetching next sample from stream (Count: {current_count})...")
             sample = next(iterator)
         except StopIteration:
             print("Reached end of Hugging Face dataset stream.")
@@ -120,6 +174,7 @@ def main():
             
         # Parse name
         filename = sample.get("filename", "")
+        print(f"[DEBUG] Sample filename: '{filename}'")
         if not filename:
             # Fallback for datasets without filename field
             label_val = sample.get("label", current_count)
@@ -132,21 +187,28 @@ def main():
             else:
                 name_display = base.replace("_", " ")
 
+        print(f"[DEBUG] Identity parsed: '{name_display}'")
+
         # Skip if we already processed this identity
         if name_display in seeded_identities:
+            print(f"[DEBUG] '{name_display}' already seeded. Skipping.")
             continue
             
         # Retrieve and convert image
+        print("[DEBUG] Converting image format...")
         pil_img = sample["image"]
         img_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
         
         # Detect and crop face
+        print("[DEBUG] Detecting face via RetinaFace...")
         face_img = crop_face(img_bgr)
         
         # Generate embeddings (multiple per person)
+        print(f"[DEBUG] Generating {args.frames_per_id} embeddings...")
         embeddings = generate_perturbed_embeddings(face_img, num_embeddings=args.frames_per_id)
         
         # Calculate master embedding (average and normalize)
+        print("[DEBUG] Calculating master embedding...")
         embeddings_np = np.array(embeddings, dtype=np.float32)
         master_emb = np.mean(embeddings_np, axis=0)
         master_norm = np.linalg.norm(master_emb)
@@ -160,6 +222,7 @@ def main():
         cv2.imwrite(image_path, face_img)
         
         # Save user to MongoDB
+        print("[DEBUG] Inserting record to MongoDB...")
         user_doc = {
             "name": name_display,
             "embeddings": embeddings,

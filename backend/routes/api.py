@@ -34,7 +34,8 @@ from services.ai_service import (
     extract_face_embedding,
     extract_multiple_face_embeddings,
     cosine_similarity,
-    FaceRecognitionError
+    FaceRecognitionError,
+    estimate_image_quality_and_threshold
 )
 
 router = APIRouter()
@@ -56,10 +57,14 @@ def get_cached_users(db, force_refresh=False):
         users = list(db.users.find({}, {"_id": 1, "name": 1, "embeddings": 1}))
         _users_cache = []
         for u in users:
-            embeddings_np = []
+            embeddings_list = []
             for emb in u.get("embeddings", []):
                 if len(emb) == 512:
-                    embeddings_np.append(np.array(emb, dtype=np.float32))
+                    embeddings_list.append(emb)
+            if embeddings_list:
+                embeddings_np = np.array(embeddings_list, dtype=np.float32)
+            else:
+                embeddings_np = np.empty((0, 512), dtype=np.float32)
             _users_cache.append({
                 "id": str(u["_id"]),
                 "name": u["name"],
@@ -325,35 +330,43 @@ async def recognize_user(
 
     # Load users from cache
     users = get_cached_users(db)
-    THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.30"))
 
     results = []
 
     for face in faces:
-        target_embedding = face["embedding"]
+        target_np = np.array(face["embedding"], dtype=np.float32)
+        norm = np.linalg.norm(target_np)
+        if norm > 0:
+            target_np = target_np / norm
+
         best_similarity = -1.0
         best_name = None
 
-        # Compare against cached users
+        # Compare against cached users using optimized vector operations
         for u in users:
-            for emb in u["embeddings"]:
+            if u["embeddings"].size > 0:
                 try:
-                    similarity = cosine_similarity(target_embedding, emb)
-                    if similarity > best_similarity:
-                        best_similarity = similarity
+                    similarities = np.dot(u["embeddings"], target_np)
+                    max_sim = float(np.max(similarities))
+                    if max_sim > best_similarity:
+                        best_similarity = max_sim
                         best_name = u["name"]
                 except Exception as e:
-                    print("Similarity error:", e)
+                    print("Matrix similarity error:", e)
+
+        # Dynamic threshold based on face quality analysis
+        face_crop = face.get("face_crop")
+        threshold = estimate_image_quality_and_threshold(face_crop)
 
         # Match decision
-        if best_name and best_similarity >= THRESHOLD:
+        if best_name and best_similarity >= threshold:
             results.append({
                 "name": best_name,
                 "confidence": round(float(best_similarity) * 100, 1),
                 "box": face["box"],
                 "status": "matched"
             })
-            print(f"Match: {best_name} ({best_similarity * 100:.1f}%)")
+            print(f"Match: {best_name} ({best_similarity * 100:.1f}%) | Threshold: {threshold:.3f}")
         else:
             results.append({
                 "name": "Unknown",
@@ -361,7 +374,7 @@ async def recognize_user(
                 "box": face["box"],
                 "status": "unknown"
             })
-            print(f"Unknown (Highest similarity: {best_similarity * 100:.1f}%)")
+            print(f"Unknown (Best similarity: {best_similarity * 100:.1f}%) | Threshold: {threshold:.3f}")
 
     return {
         "success": True,
