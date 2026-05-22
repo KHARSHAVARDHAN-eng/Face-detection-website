@@ -368,52 +368,71 @@ async def recognize_user(
                 except Exception as e:
                     print("Matrix similarity error:", e)
 
-        # Strict minimum similarity threshold (75% match)
-        threshold = 0.75
+        # Strict minimum similarity thresholds
+        KNOWN_USER_THRESHOLD = 0.75
+        SPOOF_MATCH_THRESHOLD = 0.60
+        spoof_detected = not is_liveness_real
 
-        # 3. Security decision logic (Strict Priority Order: 1. UNKNOWN USER, 2. SPOOF DETECTION, 3. LIVE VERIFIED)
-        if best_similarity < threshold or not best_name:
-            # Invalid/Unregistered User
-            results.append({
-                "name": "Invalid User",
-                "confidence": round(float(best_similarity) * 100, 1) if best_name else 0.0,
-                "box": box,
-                "status": "unknown",
-                "is_real": is_liveness_real,
-                "liveness_score": round(liveness_score, 4),
-                "spoof_detected": False,
-                "authentication_status": "unregistered",
-                "message": "Not Registered"
-            })
-            print(f"[RECOGNIZE] Invalid User (Similarity: {best_similarity*100:.1f}% below threshold {threshold*100:.1f}%). Auth Denied.")
-        elif not is_liveness_real:
-            # Spoof detected - identify closest matched person but deny authentication
-            results.append({
-                "name": best_name,
-                "confidence": round(float(best_similarity) * 100, 1),
-                "box": box,
-                "status": "spoof",
-                "is_real": False,
-                "liveness_score": round(liveness_score, 4),
-                "spoof_detected": True,
-                "authentication_status": "denied",
-                "message": "SPOOF / PROXY ATTEMPT DETECTED"
-            })
-            print(f"[RECOGNIZE] Spoof detected for matched user {best_name} (Similarity: {best_similarity*100:.1f}%). Liveness: {liveness_score:.4f} - Auth Denied.")
+        # 3. Security decision logic (Strict Priority Order: 1. SPOOF DETECTION, 2. LIVE VERIFIED)
+        if spoof_detected:
+            if best_name and best_similarity >= SPOOF_MATCH_THRESHOLD:
+                # Registered user spoof / replay attack detected
+                results.append({
+                    "name": best_name,
+                    "confidence": round(float(best_similarity) * 100, 1),
+                    "box": box,
+                    "status": "spoof",
+                    "is_real": False,
+                    "liveness_score": round(liveness_score, 4),
+                    "spoof_detected": True,
+                    "authentication_status": "denied",
+                    "message": "SPOOF / PROXY ATTEMPT DETECTED"
+                })
+                print(f"[RECOGNIZE] Spoof detected for matched user {best_name} (Similarity: {best_similarity*100:.1f}%). Liveness: {liveness_score:.4f} - Auth Denied.")
+            else:
+                # Unknown / Unregistered User under spoofing or low similarity
+                results.append({
+                    "name": "Invalid User",
+                    "confidence": round(float(best_similarity) * 100, 1) if best_name else 0.0,
+                    "box": box,
+                    "status": "unknown",
+                    "is_real": False,
+                    "liveness_score": round(liveness_score, 4),
+                    "spoof_detected": False,
+                    "authentication_status": "unregistered",
+                    "message": "Not Registered"
+                })
+                print(f"[RECOGNIZE] Spoofed face, but similarity below spoof match threshold. Treated as Unknown User.")
         else:
-            # Live person verified
-            results.append({
-                "name": best_name,
-                "confidence": round(float(best_similarity) * 100, 1),
-                "box": box,
-                "status": "matched",
-                "is_real": True,
-                "liveness_score": round(liveness_score, 4),
-                "spoof_detected": False,
-                "authentication_status": "verified",
-                "message": "Live Person Verified"
-            })
-            print(f"[RECOGNIZE] Match: {best_name} ({best_similarity * 100:.1f}%) | Liveness: {liveness_score:.3f} - Auth Verified.")
+            # Live person check
+            if best_name and best_similarity >= KNOWN_USER_THRESHOLD:
+                # Live person verified
+                results.append({
+                    "name": best_name,
+                    "confidence": round(float(best_similarity) * 100, 1),
+                    "box": box,
+                    "status": "matched",
+                    "is_real": True,
+                    "liveness_score": round(liveness_score, 4),
+                    "spoof_detected": False,
+                    "authentication_status": "verified",
+                    "message": "Live Person Verified"
+                })
+                print(f"[RECOGNIZE] Match: {best_name} ({best_similarity * 100:.1f}%) | Liveness: {liveness_score:.3f} - Auth Verified.")
+            else:
+                # Unregistered/Invalid User (either not in db, or live but similarity < 75%)
+                results.append({
+                    "name": "Invalid User",
+                    "confidence": round(float(best_similarity) * 100, 1) if best_name else 0.0,
+                    "box": box,
+                    "status": "unknown",
+                    "is_real": True,
+                    "liveness_score": round(liveness_score, 4),
+                    "spoof_detected": False,
+                    "authentication_status": "unregistered",
+                    "message": "Not Registered"
+                })
+                print(f"[RECOGNIZE] Live face, but similarity below known user threshold. Treated as Unknown User.")
 
     return {
         "success": True,
