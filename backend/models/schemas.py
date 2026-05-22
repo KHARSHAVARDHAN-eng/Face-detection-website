@@ -57,6 +57,11 @@ class FaceRecognitionResult(BaseModel):
     confidence: float
     box: List[int]
     status: str
+    is_real: Optional[bool] = None
+    liveness_score: Optional[float] = None
+    spoof_detected: Optional[bool] = None
+    authentication_status: Optional[str] = None
+    message: Optional[str] = None
 
 
 class MultiRecognitionResponse(BaseModel):

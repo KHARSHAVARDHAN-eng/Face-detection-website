@@ -435,6 +435,8 @@ export default function WebcamCapture({
       : 100;
 
   if (mode === 'recognition') {
+    const hasSpoof = faces.some(face => face.status === 'spoof' || face.spoof_detected === true || face.authentication_status === 'denied');
+    
     return (
       <div className="flex flex-col items-center w-full">
         {/* CAMERA CARD */}
@@ -456,6 +458,22 @@ export default function WebcamCapture({
               objectFit: 'cover'
             }}
           />
+
+          {/* FLASHING RED OVERLAY FOR SPOOF DETECTED */}
+          {hasSpoof && (
+            <>
+              <div className="absolute inset-0 border-[6px] border-rose-600/80 pointer-events-none bg-rose-950/15 animate-[pulse_1s_infinite] z-20 rounded-3xl" />
+              <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-30 bg-rose-950/95 border border-rose-500/50 backdrop-blur-sm px-6 py-2 rounded-2xl flex items-center gap-3 shadow-2xl animate-bounce">
+                <span className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+                </span>
+                <span className="text-rose-100 font-extrabold text-xs uppercase tracking-wider">
+                  ⚠️ SPOOF / PROXY ATTEMPT DETECTED
+                </span>
+              </div>
+            </>
+          )}
           
           {/* FACES OVERLAY */}
           {isActive && faces && faces.map((face, idx) => {
@@ -465,16 +483,29 @@ export default function WebcamCapture({
             const top = (face.box[1] / imgHeight) * 100;
             const width = ((face.box[2] - face.box[0]) / imgWidth) * 100;
             const height = ((face.box[3] - face.box[1]) / imgHeight) * 100;
-            const isMatched = face.status === 'matched';
             
-            const labelBgClass = isMatched 
-              ? 'bg-emerald-500/90 border border-emerald-400/30 text-white shadow-emerald-950/20' 
-              : 'bg-rose-500/90 border border-rose-400/30 text-white shadow-rose-950/20';
+            const isSpoof = face.status === 'spoof' || face.spoof_detected === true || face.authentication_status === 'denied';
+            const isMatched = face.status === 'matched' || face.authentication_status === 'verified';
+            const isUnknown = face.status === 'unknown' || face.authentication_status === 'unregistered' || face.name === 'Invalid User';
+            
+            let labelBgClass = 'bg-amber-500/90 border border-amber-400/30 text-white shadow-amber-950/20';
+            let boxClass = 'border-2 border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.5)]';
+            let icon = '❓';
+            
+            if (isSpoof) {
+              labelBgClass = 'bg-rose-600/95 border border-rose-500/40 text-white shadow-rose-950/40 animate-pulse';
+              boxClass = 'border-2 border-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.8),inset_0_0_10px_rgba(244,63,94,0.4)] animate-pulse';
+              icon = '🚨';
+            } else if (isMatched) {
+              labelBgClass = 'bg-emerald-500/90 border border-emerald-400/30 text-white shadow-emerald-950/20';
+              boxClass = 'border-2 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.6)]';
+              icon = '👤';
+            }
 
             return (
               <div 
                 key={idx}
-                className="absolute transition-all duration-150 border-0 bg-transparent"
+                className={`absolute transition-all duration-150 rounded-xl ${boxClass}`}
                 style={{
                   left: `${left}%`,
                   top: `${top}%`,
@@ -483,12 +514,27 @@ export default function WebcamCapture({
                 }}
               >
                 {/* FLOATING LABEL */}
-                <div className={`absolute -top-7 left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap shadow-xl backdrop-blur-sm flex items-center gap-1.5 ${labelBgClass}`}>
-                  <span>{isMatched ? '👤' : '❓'}</span>
-                  <span>{face.name}</span>
-                  {face.confidence > 0 && (
-                    <span className="font-mono font-bold opacity-90 border-l border-white/20 pl-1.5">
-                      {face.confidence.toFixed(1)}%
+                <div className={`absolute -top-10 left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap shadow-xl backdrop-blur-sm flex flex-col items-center gap-0.5 ${labelBgClass}`}>
+                  <div className="flex items-center gap-1">
+                    <span>{icon}</span>
+                    <span>{face.name}</span>
+                    {face.confidence !== undefined && face.confidence >= 0 && (
+                      <span className="font-mono font-bold opacity-90 border-l border-white/20 pl-1">
+                        {face.confidence.toFixed(1)}%
+                      </span>
+                    )}
+                  </div>
+                  {isSpoof ? (
+                    <span className="text-[8px] opacity-90 font-bold uppercase tracking-wider text-rose-200">
+                      SPOOF / PROXY ATTEMPT DETECTED
+                    </span>
+                  ) : isUnknown ? (
+                    <span className="text-[8px] opacity-90 font-medium text-amber-200">
+                      Invalid / Unregistered User
+                    </span>
+                  ) : (
+                    <span className="text-[8px] opacity-90 font-medium text-emerald-100">
+                      Live Person Verified
                     </span>
                   )}
                 </div>

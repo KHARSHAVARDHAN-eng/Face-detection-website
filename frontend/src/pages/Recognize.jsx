@@ -168,37 +168,74 @@ export default function Recognize() {
 
       {/* DETECTED USERS GRID */}
       {result && result.faces && result.faces.length > 0 && (
-        <div className="mt-6">
-          <h3 className="text-lg font-bold text-white mb-4">Detected Faces</h3>
+        <div className="mt-8">
+          <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+            <span>🔍</span> Detected Faces ({result.faces.length})
+          </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {result.faces.map((face, index) => {
-              const isMatched = face.status === 'matched';
+              const isMatched = face.status === 'matched' || face.authentication_status === 'verified';
+              const isSpoof = face.status === 'spoof' || face.spoof_detected === true || face.authentication_status === 'denied';
+              const isUnknown = face.status === 'unknown' || face.authentication_status === 'unregistered' || face.name === 'Invalid User';
+
+              let cardStyle = '';
+              let statusText = '';
+              let statusColor = '';
+              let icon = '';
+
+              if (isMatched) {
+                cardStyle = 'border-emerald-500/30 bg-emerald-950/20 text-emerald-400 shadow-emerald-950/10';
+                statusText = 'Live Person Verified';
+                statusColor = 'text-emerald-400';
+                icon = '👤';
+              } else if (isSpoof) {
+                cardStyle = 'border-rose-500/40 bg-rose-950/30 text-rose-400 shadow-rose-950/20 animate-pulse border-2';
+                statusText = '';
+                statusColor = '';
+                icon = '🚨';
+              } else {
+                cardStyle = 'border-amber-500/30 bg-amber-950/20 text-amber-400 shadow-amber-950/10';
+                statusText = 'Invalid / Unregistered User';
+                statusColor = 'text-amber-400';
+                icon = '❓';
+              }
+
               return (
                 <div 
                   key={index} 
-                  className={`p-4 rounded-2xl border flex items-center justify-between transition-all duration-300 ${
-                    isMatched 
-                      ? 'border-emerald-500/30 bg-emerald-950/20 text-emerald-400 shadow-emerald-950/10' 
-                      : 'border-rose-500/30 bg-rose-950/20 text-rose-400 shadow-rose-950/10'
-                  }`}
+                  className={`p-5 rounded-2xl border flex items-center justify-between transition-all duration-300 ${cardStyle}`}
                 >
                   <div className="flex items-center gap-3">
-                    <span className="text-xl">{isMatched ? '👤' : '❓'}</span>
+                    <span className="text-2xl">{icon}</span>
                     <div>
                       <h4 className="font-bold text-white text-base leading-tight">
                         {face.name}
                       </h4>
-                      <p className="text-xs text-slate-400 mt-1">
-                        Status: <span className={isMatched ? 'text-emerald-400 font-medium' : 'text-rose-400 font-medium'}>
-                          {isMatched ? 'Verified' : 'Unknown'}
-                        </span>
-                      </p>
+                      {isSpoof ? (
+                        <div className="text-xs text-rose-400 mt-2 flex flex-col gap-0.5 font-semibold">
+                          <span className="text-rose-400 font-extrabold uppercase tracking-wider text-[10px]">
+                            ⚠️ SPOOF / PROXY ATTEMPT DETECTED
+                          </span>
+                          <span className="text-rose-300">
+                            📱 Phone Screen Replay Attack
+                          </span>
+                          <span className="text-rose-500 font-bold uppercase text-[11px] tracking-widest mt-1">
+                            🚫 Access Denied
+                          </span>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-400 mt-1">
+                          Status: <span className={`${statusColor} font-medium`}>
+                            {statusText}
+                          </span>
+                        </p>
+                      )}
                     </div>
                   </div>
-                  {face.confidence > 0 && (
-                    <div className="text-right">
-                      <span className="font-mono font-bold text-sm bg-slate-950/60 px-2 py-1 rounded-lg border border-slate-800">
-                        {face.confidence.toFixed(1)}%
+                  {face.confidence !== undefined && (
+                    <div className="text-right flex flex-col items-end gap-1">
+                      <span className="font-mono font-bold text-xs bg-slate-950/60 px-2.5 py-1 rounded-lg border border-slate-800 text-slate-300">
+                        {face.confidence.toFixed(1)}% Match
                       </span>
                     </div>
                   )}

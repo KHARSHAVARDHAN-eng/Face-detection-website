@@ -37,6 +37,8 @@ from services.ai_service import (
     FaceRecognitionError,
     estimate_image_quality_and_threshold
 )
+from services.anti_spoof_service import get_anti_spoof_service
+import cv2
 
 router = APIRouter()
 
@@ -306,10 +308,12 @@ async def recognize_user(
     db = Depends(get_db)
 ):
 
-    print("\n===== RECOGNITION (MULTI-USER) =====")
+    print("\n===== RECOGNITION (MULTI-USER WITH ANTI-SPOOFING) =====")
 
     try:
         image_bytes = await image.read()
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         faces, w_img, h_img = extract_multiple_face_embeddings(image_bytes)
     except Exception as e:
         print("Embedding extraction failed:", e)
@@ -330,10 +334,20 @@ async def recognize_user(
 
     # Load users from cache
     users = get_cached_users(db)
+    anti_spoof = get_anti_spoof_service()
 
     results = []
 
     for face in faces:
+        # 1. Run Anti-Spoof / Liveness Detection first
+        box = face["box"]  # Coordinates: [x1, y1, x2, y2]
+        is_real_from_model, liveness_score = anti_spoof.check_liveness(img_bgr, box)
+
+        # Apply high-confidence liveness threshold
+        LIVENESS_CONFIDENCE_THRESHOLD = 0.85
+        is_liveness_real = is_real_from_model and (liveness_score >= LIVENESS_CONFIDENCE_THRESHOLD)
+
+        # 2. Extract and normalize target embedding for ArcFace identity recognition
         target_np = np.array(face["embedding"], dtype=np.float32)
         norm = np.linalg.norm(target_np)
         if norm > 0:
@@ -354,27 +368,52 @@ async def recognize_user(
                 except Exception as e:
                     print("Matrix similarity error:", e)
 
-        # Dynamic threshold based on face quality analysis
-        face_crop = face.get("face_crop")
-        threshold = estimate_image_quality_and_threshold(face_crop)
+        # Strict minimum similarity threshold (75% match)
+        threshold = 0.75
 
-        # Match decision
-        if best_name and best_similarity >= threshold:
+        # 3. Security decision logic (Strict Priority Order: 1. UNKNOWN USER, 2. SPOOF DETECTION, 3. LIVE VERIFIED)
+        if best_similarity < threshold or not best_name:
+            # Invalid/Unregistered User
+            results.append({
+                "name": "Invalid User",
+                "confidence": round(float(best_similarity) * 100, 1) if best_name else 0.0,
+                "box": box,
+                "status": "unknown",
+                "is_real": is_liveness_real,
+                "liveness_score": round(liveness_score, 4),
+                "spoof_detected": False,
+                "authentication_status": "unregistered",
+                "message": "Not Registered"
+            })
+            print(f"[RECOGNIZE] Invalid User (Similarity: {best_similarity*100:.1f}% below threshold {threshold*100:.1f}%). Auth Denied.")
+        elif not is_liveness_real:
+            # Spoof detected - identify closest matched person but deny authentication
             results.append({
                 "name": best_name,
                 "confidence": round(float(best_similarity) * 100, 1),
-                "box": face["box"],
-                "status": "matched"
+                "box": box,
+                "status": "spoof",
+                "is_real": False,
+                "liveness_score": round(liveness_score, 4),
+                "spoof_detected": True,
+                "authentication_status": "denied",
+                "message": "SPOOF / PROXY ATTEMPT DETECTED"
             })
-            print(f"Match: {best_name} ({best_similarity * 100:.1f}%) | Threshold: {threshold:.3f}")
+            print(f"[RECOGNIZE] Spoof detected for matched user {best_name} (Similarity: {best_similarity*100:.1f}%). Liveness: {liveness_score:.4f} - Auth Denied.")
         else:
+            # Live person verified
             results.append({
-                "name": "Unknown",
-                "confidence": round(float(best_similarity) * 100, 1) if best_name else 0.0,
-                "box": face["box"],
-                "status": "unknown"
+                "name": best_name,
+                "confidence": round(float(best_similarity) * 100, 1),
+                "box": box,
+                "status": "matched",
+                "is_real": True,
+                "liveness_score": round(liveness_score, 4),
+                "spoof_detected": False,
+                "authentication_status": "verified",
+                "message": "Live Person Verified"
             })
-            print(f"Unknown (Best similarity: {best_similarity * 100:.1f}%) | Threshold: {threshold:.3f}")
+            print(f"[RECOGNIZE] Match: {best_name} ({best_similarity * 100:.1f}%) | Liveness: {liveness_score:.3f} - Auth Verified.")
 
     return {
         "success": True,
