@@ -168,6 +168,22 @@ export default function WebcamCapture({
     };
 
   }, [isActive, registrationSuccess]);
+  
+  useEffect(() => {
+    if (mode === 'recognition' && faces && faces.length > 0) {
+      const messages = faces.map(face => {
+        const isSpoof = face.status === 'spoof' || face.spoof_detected === true || face.authentication_status === 'denied';
+        if (isSpoof) {
+          return face.message || `${face.name} - Proxy Attempt Detected`;
+        } else if (face.status === 'matched' || face.authentication_status === 'verified') {
+          return `${face.name} - Live Person Verified`;
+        } else {
+          return `Invalid / Unregistered User`;
+        }
+      });
+      setInstruction(messages.join(' | '));
+    }
+  }, [faces, mode]);
 
   const poseThresholds = {
     yaw: 0.02,

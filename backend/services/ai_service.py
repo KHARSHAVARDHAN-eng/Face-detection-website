@@ -139,19 +139,43 @@ def extract_face_embedding(image_bytes: bytes) -> list:
         if img is None:
             raise FaceRecognitionError("No valid face detected")
 
-        # Extract, align, and crop the face using MTCNN
+        # Extract, align, and crop the face using RetinaFace
         extracted = DeepFace.extract_faces(
             img_path=img,
-            detector_backend="mtcnn",
+            detector_backend="retinaface",
             enforce_detection=False,
             align=True
         )
+        if not extracted or len(extracted) == 0:
+            print("[AI_SERVICE] Enrollment: RetinaFace returned no faces. Trying MTCNN fallback...")
+            extracted = DeepFace.extract_faces(
+                img_path=img,
+                detector_backend="mtcnn",
+                enforce_detection=False,
+                align=True
+            )
+        if not extracted or len(extracted) == 0:
+            print("[AI_SERVICE] Enrollment: MTCNN returned no faces. Trying OpenCV fallback...")
+            extracted = DeepFace.extract_faces(
+                img_path=img,
+                detector_backend="opencv",
+                enforce_detection=False,
+                align=True
+            )
+            
         if not extracted or len(extracted) == 0:
             raise FaceRecognitionError("No valid face detected")
 
         face_raw = extracted[0]["face"]
         if face_raw.max() <= 1.0:
             face_raw = (face_raw * 255).astype(np.uint8)
+
+        # Sharpen low-resolution crops
+        h_crop, w_crop = face_raw.shape[:2]
+        if w_crop < 150 or h_crop < 150:
+            print(f"[AI_SERVICE] Enrollment: Low resolution crop detected ({w_crop}x{h_crop}). Applying sharpening filter.")
+            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
+            face_raw = cv2.filter2D(face_raw, -1, kernel)
 
         # Apply preprocessing pipeline
         preprocessed = preprocess_face(face_raw)
@@ -193,14 +217,32 @@ def extract_multiple_face_embeddings(image_bytes: bytes):
             
         h_img, w_img = img.shape[:2]
         
-        # Extract all aligned faces using MTCNN
+        # Extract all aligned faces using RetinaFace
         extracted_faces = DeepFace.extract_faces(
             img_path=img,
-            detector_backend="mtcnn",
+            detector_backend="retinaface",
             enforce_detection=False,
             align=True
         )
         
+        if not extracted_faces or len(extracted_faces) == 0:
+            print("[AI_SERVICE] Multiple: RetinaFace returned no faces. Trying MTCNN fallback...")
+            extracted_faces = DeepFace.extract_faces(
+                img_path=img,
+                detector_backend="mtcnn",
+                enforce_detection=False,
+                align=True
+            )
+            
+        if not extracted_faces or len(extracted_faces) == 0:
+            print("[AI_SERVICE] Multiple: MTCNN returned no faces. Trying OpenCV fallback...")
+            extracted_faces = DeepFace.extract_faces(
+                img_path=img,
+                detector_backend="opencv",
+                enforce_detection=False,
+                align=True
+            )
+            
         results = []
         if not extracted_faces:
             return [], w_img, h_img
@@ -217,6 +259,13 @@ def extract_multiple_face_embeddings(image_bytes: bytes):
             face_raw = obj["face"]
             if face_raw.max() <= 1.0:
                 face_raw = (face_raw * 255).astype(np.uint8)
+
+            # Sharpen low-resolution crops
+            h_crop, w_crop = face_raw.shape[:2]
+            if w_crop < 150 or h_crop < 150:
+                print(f"[AI_SERVICE] Multiple: Low resolution crop detected ({w_crop}x{h_crop}). Applying sharpening filter.")
+                kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
+                face_raw = cv2.filter2D(face_raw, -1, kernel)
 
             # Preprocess the aligned face crop
             preprocessed = preprocess_face(face_raw)

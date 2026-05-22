@@ -214,7 +214,7 @@ export default function Recognize() {
                       {isSpoof ? (
                         <div className="text-xs text-rose-400 mt-2 flex flex-col gap-0.5 font-semibold">
                           <span className="text-rose-400 font-extrabold uppercase tracking-wider text-[10px]">
-                            ⚠️ SPOOF / PROXY ATTEMPT DETECTED
+                            ⚠️ {face.message || 'SPOOF / PROXY ATTEMPT DETECTED'}
                           </span>
                           <span className="text-rose-300">
                             📱 Phone Screen Replay Attack

@@ -62,6 +62,18 @@ class FaceRecognitionResult(BaseModel):
     spoof_detected: Optional[bool] = None
     authentication_status: Optional[str] = None
     message: Optional[str] = None
+    
+    # CDCN and Liveness properties
+    face_detected: Optional[bool] = True
+    liveness: Optional[str] = None # "real" or "spoof"
+    real_score: Optional[float] = None
+    spoof_score: Optional[float] = None
+    blink_detected: Optional[bool] = None
+    head_movements: Optional[dict] = None
+    identity_verified: Optional[bool] = None
+    identity: Optional[str] = None
+    proxy_detected: Optional[bool] = None
+
 
 
 class MultiRecognitionResponse(BaseModel):

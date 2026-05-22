@@ -37,7 +37,8 @@ from services.ai_service import (
     FaceRecognitionError,
     estimate_image_quality_and_threshold
 )
-from services.anti_spoof_service import get_anti_spoof_service
+from services.cdcn_service import get_cdcn_service
+from services.liveness_features_service import get_liveness_features_service
 import cv2
 
 router = APIRouter()
@@ -334,20 +335,15 @@ async def recognize_user(
 
     # Load users from cache
     users = get_cached_users(db)
-    anti_spoof = get_anti_spoof_service()
+    cdcn_service = get_cdcn_service()
+    liveness_features_service = get_liveness_features_service()
 
     results = []
 
     for face in faces:
-        # 1. Run Anti-Spoof / Liveness Detection first
         box = face["box"]  # Coordinates: [x1, y1, x2, y2]
-        is_real_from_model, liveness_score = anti_spoof.check_liveness(img_bgr, box)
-
-        # Apply high-confidence liveness threshold
-        LIVENESS_CONFIDENCE_THRESHOLD = 0.85
-        is_liveness_real = is_real_from_model and (liveness_score >= LIVENESS_CONFIDENCE_THRESHOLD)
-
-        # 2. Extract and normalize target embedding for ArcFace identity recognition
+        
+        # 1. ALWAYS compute ArcFace embedding/matching first
         target_np = np.array(face["embedding"], dtype=np.float32)
         norm = np.linalg.norm(target_np)
         if norm > 0:
@@ -355,6 +351,7 @@ async def recognize_user(
 
         best_similarity = -1.0
         best_name = None
+        top_k_sim = -1.0
 
         # Compare against cached users using optimized vector operations
         for u in users:
@@ -362,77 +359,132 @@ async def recognize_user(
                 try:
                     similarities = np.dot(u["embeddings"], target_np)
                     max_sim = float(np.max(similarities))
+                    
+                    # Compute top-3 nearest embedding average
+                    sorted_sims = np.sort(similarities)[::-1]
+                    k_val = min(3, len(sorted_sims))
+                    avg_top_k = float(np.mean(sorted_sims[:k_val]))
+                    
                     if max_sim > best_similarity:
                         best_similarity = max_sim
                         best_name = u["name"]
+                        top_k_sim = avg_top_k
                 except Exception as e:
                     print("Matrix similarity error:", e)
 
-        # Strict minimum similarity thresholds
-        KNOWN_USER_THRESHOLD = 0.75
-        SPOOF_MATCH_THRESHOLD = 0.60
-        spoof_detected = not is_liveness_real
+        # 2. Run CDCN Anti-Spoofing / Liveness Detection (returns label, real_score, spoof_score)
+        cdcn_label, real_score, spoof_score = cdcn_service.predict_liveness(img_bgr, box)
+        
+        # Run MediaPipe eye blinking, head pose tracking, and static check
+        tracking_info = liveness_features_service.track_and_update(img_bgr, box)
+        
+        blink_detected = tracking_info["blink_detected"]
+        head_movements = tracking_info["head_movements"]
+        is_static = tracking_info["is_static"]
+        track_id = tracking_info["track_id"]
+        
+        # Combine model prediction and micro-movement check
+        spoof_detected = (cdcn_label == "spoof") or is_static
+        
+        # Reject faces with no blink activity after a long duration (e.g. >15 frames)
+        if track_id is not None:
+            session = liveness_features_service.sessions.get(track_id)
+            if session and isinstance(session, dict) and session.get("frame_count", 0) > 15 and not session.get("blink_detected", False):
+                print(f"[RECOGNIZE] Track #{track_id} rejected: no blink activity over {session.get('frame_count')} frames.")
+                spoof_detected = True
 
-        # 3. Security decision logic (Strict Priority Order: 1. SPOOF DETECTION, 2. LIVE VERIFIED)
-        if spoof_detected:
-            if best_name and best_similarity >= SPOOF_MATCH_THRESHOLD:
-                # Registered user spoof / replay attack detected
-                results.append({
-                    "name": best_name,
-                    "confidence": round(float(best_similarity) * 100, 1),
-                    "box": box,
-                    "status": "spoof",
-                    "is_real": False,
-                    "liveness_score": round(liveness_score, 4),
-                    "spoof_detected": True,
-                    "authentication_status": "denied",
-                    "message": "SPOOF / PROXY ATTEMPT DETECTED"
-                })
-                print(f"[RECOGNIZE] Spoof detected for matched user {best_name} (Similarity: {best_similarity*100:.1f}%). Liveness: {liveness_score:.4f} - Auth Denied.")
-            else:
-                # Unknown / Unregistered User under spoofing or low similarity
-                results.append({
-                    "name": "Invalid User",
-                    "confidence": round(float(best_similarity) * 100, 1) if best_name else 0.0,
-                    "box": box,
-                    "status": "unknown",
-                    "is_real": False,
-                    "liveness_score": round(liveness_score, 4),
-                    "spoof_detected": False,
-                    "authentication_status": "unregistered",
-                    "message": "Not Registered"
-                })
-                print(f"[RECOGNIZE] Spoofed face, but similarity below spoof match threshold. Treated as Unknown User.")
+        # Lowered ArcFace false negatives via tuned similarity thresholds
+        KNOWN_USER_THRESHOLD = 0.65
+        SPOOF_MATCH_THRESHOLD = 0.48
+
+        # Determine if identity matches based on liveness state
+        effective_threshold = SPOOF_MATCH_THRESHOLD if spoof_detected else KNOWN_USER_THRESHOLD
+        is_identified = (best_name is not None) and (best_similarity >= effective_threshold)
+
+        if is_identified:
+            identity = best_name
+            identity_verified = True
         else:
-            # Live person check
-            if best_name and best_similarity >= KNOWN_USER_THRESHOLD:
-                # Live person verified
-                results.append({
-                    "name": best_name,
-                    "confidence": round(float(best_similarity) * 100, 1),
-                    "box": box,
-                    "status": "matched",
-                    "is_real": True,
-                    "liveness_score": round(liveness_score, 4),
-                    "spoof_detected": False,
-                    "authentication_status": "verified",
-                    "message": "Live Person Verified"
-                })
-                print(f"[RECOGNIZE] Match: {best_name} ({best_similarity * 100:.1f}%) | Liveness: {liveness_score:.3f} - Auth Verified.")
+            identity = "Invalid User"
+            identity_verified = False
+
+        # Debug Logs: For every detected face print: identity, similarity, spoof score, face bbox, embedding confidence
+        print(f"[DEBUG] ==========================================")
+        print(f"[DEBUG] Face BBox: {box}")
+        print(f"[DEBUG] Identity Prediction: {identity} (Verified: {identity_verified})")
+        print(f"[DEBUG] Cosine Similarity: {best_similarity:.4f} (Threshold: {effective_threshold:.4f})")
+        print(f"[DEBUG] Top-k Similarity: {top_k_sim:.4f}")
+        print(f"[DEBUG] Spoof Score: {spoof_score:.4f} (Real Score: {real_score:.4f}, Label: {cdcn_label})")
+        print(f"[DEBUG] Embedding Confidence: {float(best_similarity) * 100:.1f}%")
+        print(f"[DEBUG] ==========================================")
+
+        if spoof_detected:
+            # Denied
+            status = "spoof"
+            is_real = False
+            authentication_status = "denied"
+            message = f"{identity} - Proxy Attempt Detected" if identity_verified else "Spoof / Proxy Attempt Detected"
+        else:
+            # Live checked
+            if identity_verified:
+                status = "matched"
+                is_real = True
+                authentication_status = "verified"
+                message = "Live Person Verified"
             else:
-                # Unregistered/Invalid User (either not in db, or live but similarity < 75%)
-                results.append({
-                    "name": "Invalid User",
-                    "confidence": round(float(best_similarity) * 100, 1) if best_name else 0.0,
-                    "box": box,
-                    "status": "unknown",
-                    "is_real": True,
-                    "liveness_score": round(liveness_score, 4),
-                    "spoof_detected": False,
-                    "authentication_status": "unregistered",
-                    "message": "Not Registered"
-                })
-                print(f"[RECOGNIZE] Live face, but similarity below known user threshold. Treated as Unknown User.")
+                status = "unknown"
+                is_real = True
+                authentication_status = "unregistered"
+                message = "Not Registered"
+
+        results.append({
+            "name": identity,
+            "confidence": round(float(best_similarity) * 100, 1) if best_name else 0.0,
+            "box": box,
+            "status": status,
+            "is_real": is_real,
+            "liveness_score": round(real_score, 4),
+            "spoof_detected": spoof_detected,
+            "authentication_status": authentication_status,
+            "message": message,
+            
+            # CDCN / Liveness Properties
+            "face_detected": True,
+            "liveness": "spoof" if spoof_detected else "real",
+            "real_score": round(real_score, 4),
+            "spoof_score": round(spoof_score, 4),
+            "blink_detected": blink_detected,
+            "head_movements": head_movements,
+            "identity_verified": identity_verified,
+            
+            # CDCN Pipeline specific outputs requested
+            "identity": identity,
+            "proxy_detected": spoof_detected
+        })
+
+    # Ensure multi-face tracking consistency:
+    # If same identity appears twice: one real, one spoof, mark: "Duplicate identity with spoof attempt detected"
+    identity_indices = {}
+    for idx, face in enumerate(results):
+        name = face["identity"]
+        if name and name != "Invalid User" and face["identity_verified"]:
+            if name not in identity_indices:
+                identity_indices[name] = []
+            identity_indices[name].append(idx)
+            
+    for name, indices in identity_indices.items():
+        if len(indices) >= 2:
+            # Check if at least one is spoof
+            has_spoof = any(results[idx]["spoof_detected"] for idx in indices)
+            if has_spoof:
+                print(f"[RECOGNIZE] Duplicate identity '{name}' detected with spoof attempt!")
+                for idx in indices:
+                    results[idx]["message"] = "Duplicate identity with spoof attempt detected"
+                    results[idx]["authentication_status"] = "denied"
+                    results[idx]["is_real"] = False
+                    results[idx]["proxy_detected"] = True
+                    results[idx]["spoof_detected"] = True
+                    results[idx]["status"] = "spoof"
 
     return {
         "success": True,
